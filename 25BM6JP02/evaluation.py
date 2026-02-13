@@ -5,13 +5,9 @@ from models import get_laplace_prob, get_good_turing_prob
 from preprocessing import replace_unknowns, clean_text
 
 def calculate_perplexity(text_tokens, trainer, smoothing, V):
-    """
-    Calculates perplexity for a single document list of tokens.
-    """
     n = trainer.n
     if len(text_tokens) < n: return float('inf')
     
-    # Generate N-grams
     if n == 1: ngrams = text_tokens
     else: ngrams = list(zip(*[text_tokens[i:] for i in range(n)]))
     
@@ -27,7 +23,7 @@ def calculate_perplexity(text_tokens, trainer, smoothing, V):
         if prob > 0:
             log_prob_sum += math.log(prob)
         else:
-            return float('inf') # Infinite perplexity if prob is 0
+            return float('inf')
             
     return math.exp(-1/T * log_prob_sum)
 
@@ -36,10 +32,7 @@ def evaluate_models(test_datasets, models, V):
     
     for domain, df in test_datasets.items():
         print(f"Evaluating on {domain} ({len(df)} articles)...")
-        
-        # Pre-process test set with <UNK> once to save time
         processed_docs = []
-        # ERROR FIX: We use the 'text' column which is guaranteed by main.py
         for text in df['text']:
             tokens = clean_text(text)
             processed_docs.append(replace_unknowns(tokens, models[0].vocab))

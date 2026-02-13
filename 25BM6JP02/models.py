@@ -12,7 +12,6 @@ class NgramTrainer:
     def train(self, corpus_tokens_lists):
         """
         Trains the model by counting n-grams in the provided corpus.
-        corpus_tokens_lists: List of lists of tokens (already processed with <UNK>)
         """
         print(f"Training {self.n}-gram model...")
         
@@ -44,10 +43,8 @@ def get_laplace_prob(ngram, trainer, V, k=1):
     count = trainer.counts.get(ngram, 0)
     
     if trainer.n == 1:
-        # For Unigram, history count is total tokens
         return (count + k) / (trainer.total_N + k * V)
     else:
-        # For Bigram/Trigram, history is the preceding words
         history = ngram[:-1] if trainer.n > 2 else ngram[0]
         h_count = trainer.history_counts.get(history, 0)
         return (count + k) / (h_count + k * V)
@@ -62,22 +59,25 @@ def get_good_turing_prob(ngram, trainer):
     if c == 0:
         n1 = trainer.nc_dict.get(1, 0)
         # Avoid division by zero
-        return n1 / trainer.total_N if trainer.total_N > 0 else 0
+        if trainer.total_N == 0: return 0
+        return n1 / trainer.total_N
     
-    # Case 2: Seen (c>0) -> Calculate Adjusted Count c*
+    # Case 2: Seen (c > 0)
     nc = trainer.nc_dict.get(c, 0)
     nc_next = trainer.nc_dict.get(c + 1, 0)
     
-    # Standard Good-Turing fallback: if Nc or Nc+1 is 0, use raw count
+    # Standard fallback if bins are empty
     if nc == 0 or nc_next == 0: 
         c_star = c
     else: 
         c_star = (c + 1) * (nc_next / nc)
     
-    # Calculate Probability P = c* / N(history)
+    # Probability P = c* / N(h)
     if trainer.n == 1:
         return c_star / trainer.total_N
     else:
         history = ngram[:-1] if trainer.n > 2 else ngram[0]
         h_count = trainer.history_counts.get(history, 0)
-        return c_star / h_count if h_count > 0 else 0
+        # Safety for unseen history
+        if h_count == 0: return 0 
+        return c_star / h_count

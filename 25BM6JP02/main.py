@@ -1,13 +1,12 @@
 import pandas as pd
 import time
+import os
 from collections import Counter
-from preprocessing import clean_text, replace_unknowns
+from preprocessing import clean_text, replace_unknowns, get_filtered_ngrams
 from models import NgramTrainer
 from evaluation import evaluate_models
-import os
 
 # --- CONFIGURATION ---
-# Ensure these match your actual folder structure
 TRAIN_FILE = 'data/wiki_train.csv' 
 TEST_FILES = {
     'Wikipedia': 'data/wiki_test.csv',
@@ -34,62 +33,67 @@ def main():
     df_train = df_train.drop(df_val.index)
     
     # ---------------------------------------------------------
-    # 2. Build Vocabulary (The 1% Rule)
+    # 2. Pre-process & Build Unigram Vocabulary
     # ---------------------------------------------------------
-    print("Building Vocabulary (1% Rule)...")
-    article_counts = Counter()
+    print("Cleaning text and building Unigram Vocabulary...")
     all_clean_tokens = []
     
-    # First pass: Clean and count document frequency
-    # Note: 'text' column assumed in train file based on your notebook
+    # Safety check for column name
+    if 'text' not in df_train.columns:
+        if 'title' in df_train.columns: 
+             # Assuming single column file structure might vary
+             df_train.rename(columns={df_train.columns[-1]: 'text'}, inplace=True)
+        else:
+             print("Error: Could not locate 'text' column.")
+             return
+
     for text in df_train['text']:
         tokens = clean_text(text)
         all_clean_tokens.append(tokens)
-        unique_tokens = set(tokens)
-        for t in unique_tokens:
-            article_counts[t] += 1
             
-    min_articles = len(df_train) * UNK_THRESHOLD
-    valid_vocab = {word for word, count in article_counts.items() if count >= min_articles}
-    valid_vocab.add('<UNK>') 
+    # Select Unigrams appearing in 1% of articles
+    valid_unigrams = get_filtered_ngrams(all_clean_tokens, n=1, threshold_pct=UNK_THRESHOLD)
     
-    print(f"Vocabulary Size (V): {len(valid_vocab)}")
+    # Add <UNK> to the valid vocabulary
+    valid_vocab = set(valid_unigrams)
+    valid_vocab.add('<UNK>')
+    
+    print(f"Unigram Vocabulary Size (V): {len(valid_vocab)}")
     
     # ---------------------------------------------------------
-    # 3. Replace <UNK> in Training Data
+    # 3. Replace <UNK> (Training Data Preparation)
     # ---------------------------------------------------------
-    print("Processing Training Data with <UNK>...")
+    print("Replacing <UNK> in training data...")
     # This creates the final list of lists for training
     training_data_final = [replace_unknowns(doc, valid_vocab) for doc in all_clean_tokens]
     
+    # NOTE: We do NOT strictly filter bigrams/trigrams here anymore.
+    # Filtering them destroys N1 (items seen once), which breaks Good-Turing.
+    # We rely on the fact that we strictly filtered the *words* (unigrams) themselves.
+
     # ---------------------------------------------------------
     # 4. Train Models (Unigram, Bigram, Trigram)
     # ---------------------------------------------------------
     models = []
     for n in [1, 2, 3]:
-        trainer = NgramTrainer(n, valid_vocab)
+        # We pass valid_vocab mainly for reference/unigram counting
+        trainer = NgramTrainer(n, valid_vocab) 
         trainer.train(training_data_final)
         models.append(trainer)
         
     # ---------------------------------------------------------
-    # 5. Load Test Data (WITH ERROR FIX)
+    # 5. Load Test Data
     # ---------------------------------------------------------
     print("\nLoading Test Data...")
     test_dfs = {}
     for name, path in TEST_FILES.items():
         try:
             df = pd.read_csv(path)
-            
-            # --- FIX FOR KEYERROR: 'text' ---
-            # If 'text' column is missing, rename the last column to 'text'
             if 'text' not in df.columns:
-                last_col = df.columns[-1]
-                df.rename(columns={last_col: 'text'}, inplace=True)
-            # -------------------------------
-                
+                df.rename(columns={df.columns[-1]: 'text'}, inplace=True)
             test_dfs[name] = df
         except FileNotFoundError:
-            print(f"Warning: {path} not found. Skipping {name}.")
+            print(f"Warning: {path} not found.")
             
     # ---------------------------------------------------------
     # 6. Evaluation
@@ -98,13 +102,12 @@ def main():
     results_df = evaluate_models(test_dfs, models, len(valid_vocab))
     
     # ---------------------------------------------------------
-    # 7. Final Report Formatting
+    # 7. Final Report
     # ---------------------------------------------------------
     print("\n" + "="*60)
-    print("FINAL PERPLEXITY REPORT (Lower is Better)")
+    print("FINAL PERPLEXITY REPORT")
     print("="*60)
     
-    # Pivot for cleaner display
     pivot = results_df.pivot_table(index=['Domain', 'Model'], columns='Smoothing', values='Perplexity')
     print(pivot.round(2))
     
